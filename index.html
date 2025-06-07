@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Лёгкий Чат Менеджер</title>
+<style>
+body {
+  font-family: sans-serif;
+  margin: 0;
+  padding: 0;
+  background-color: #f0f0f0;
+}
+
+.container {
+  max-width: 800px;
+  margin: 20px auto;
+  background-color: #fff;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+}
+
+.header {
+  background-color: #007bff;
+  color: white;
+  padding: 20px;
+  text-align: center;
+}
+
+.user-id-display {
+  padding: 10px;
+  border-bottom: 1px solid #ccc;
+  text-align: center;
+}
+
+.user-id-display p {
+  margin: 0;
+  font-size: 1.2em;
+}
+
+.search-bar {
+  padding: 10px;
+  border-bottom: 1px solid #ccc;
+  text-align: center;
+}
+
+.search-bar input[type="text"] {
+  padding: 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  width: 200px;
+}
+
+.search-bar button {
+  padding: 8px 12px;
+  background-color: #007bff;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.chat-container {
+  display: flex;
+  height: 400px;
+}
+
+.chat-window {
+  width: 100%;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.messages {
+  flex-grow: 1;
+  overflow-y: auto;
+  padding: 10px;
+}
+
+.message {
+  padding: 8px 12px;
+  border-radius: 8px;
+  margin-bottom: 8px;
+}
+
+.message.sent {
+  background-color: #dcf8c6;
+  align-self: flex-end;
+}
+
+.message.received {
+  background-color: #f0f0f0;
+  align-self: flex-start;
+}
+
+.input-area {
+  padding: 10px;
+  border-top: 1px solid #ccc;
+  display: flex;
+}
+
+.input-area input[type="text"] {
+  flex-grow: 1;
+  padding: 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  margin-right: 10px;
+}
+
+.input-area button {
+  padding: 8px 12px;
+  background-color: #007bff;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.hidden {
+  display: none;
+}
+</style>
+</head>
+<body>
+
+<div class="container">
+  <div class="header">
+    <h1>Лёгкий Чат Менеджер</h1>
+  </div>
+
+  <div class="user-id-display">
+    <p>Ваш ID: <span id="user-id">...</span></p>
+  </div>
+
+  <div class="search-bar" id="search-bar">
+    <input type="text" id="search-id" placeholder="Поиск пользователя по ID">
+    <button onclick="findUser()">Найти</button>
+  </div>
+
+  <div class="chat-container">
+    <div class="chat-window hidden" id="chat-window">
+      <div class="messages" id="messages">
+        <!-- Сообщения будут отображаться здесь -->
+      </div>
+      <div class="input-area">
+      	        <input type="text" id="message-input" placeholder="Введите сообщение">
+        <button onclick="sendMessage()">Отправить</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
+<script>
+let usedIds = JSON.parse(localStorage.getItem('usedIds')) || [];
+let socket = io();  // Подключение к Socket.IO серверу
+
+function generateUniqueId() {
+  let id;
+  do {
+    id = Math.floor(Math.random() * 1000);
+  } while (usedIds.includes(id));
+  usedIds.push(id);
+  localStorage.setItem('usedIds', JSON.stringify(usedIds));  // Сохраняем список использованных ID
+  return id;
+}
+
+// Получаем или генерируем ID
+let userId = localStorage.getItem('userId');
+if (!userId) {
+  userId = generateUniqueId();
+  localStorage.setItem('userId', userId); // Сохраняем ID в localStorage
+}
+document.getElementById('user-id').textContent = userId;
+let currentUserId = userId;
+
+let targetUserId = null; // ID пользователя, с которым мы сейчас переписываемся
+
+// Функция для обновления списка использованных ID на сервере (необходима в реальном приложении)
+function updateUsedIdsOnServer(usedIds) {
+    // В реальном приложении отправьте эти данные на сервер, чтобы он тоже знал, какие ID заняты.
+    // Это важно, если у вас несколько серверов или несколько пользователей одновременно.
+    fetch('/update-used-ids', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ usedIds: usedIds })
+    })
+    .then(response => {
+        if (!response.ok) {
+            console.error('Не удалось обновить список использованных ID на сервере');
+        }
+    })
+    .catch(error => {
+        console.error('Ошибка при обновлении списка использованных ID на сервере:', error);
+    });
+}
+socket.emit('user_connected', currentUserId); // Сообщаем серверу, что пользователь подключился.
+
+function findUser() {
+  targetUserId = document.getElementById('search-id').value;
+
+  if (targetUserId === currentUserId) {
+    alert("Вы не можете начать чат с самим собой.");
+    return;
+  }
+
+  startChat();
+}
+
+function startChat() {
+  const chatWindow = document.getElementById('chat-window');
+  const messagesContainer = document.getElementById('messages');
+
+  // Очищаем существующие сообщения
+  messagesContainer.innerHTML = '';
+
+  // Показываем окно чата
+  chatWindow.classList.remove('hidden');
+}
+
+
+function sendMessage() {
+  const messageInput = document.getElementById('message-input');
+  const messageText = messageInput.value.trim();
+
+   if (messageText !== '') {
+
+     const messageData = {
+       fromUserId: currentUserId,
+       toUserId: targetUserId,
+       message: messageText
+     };
+
+     // Отправляем сообщение на сервер через Socket.IO
+     socket.emit('send_message', messageData);
+
+        messageInput.value = '';  // Очищаем поле ввода
+    }
+
+}
+
+
+function addMessage(message, type, fromUserId) {
+  const messagesContainer = document.getElementById('messages');
+  const messageElement = document.createElement('div');
+  messageElement.classList.add('message', type);
+  messageElement.textContent = message;
+  messagesContainer.appendChild(messageElement);
+
+  // Автоматическая прокрутка вниз
+  messagesContainer.scrollTop = messagesContainer.scrollHeight;
+  if(fromUserId && type === "received") {
+        messageElement.textContent = `Сообщение от ${fromUserId}: ${message}`;
+    }
+}
+
+// Обработчик входящих сообщений
+socket.on('receive_message', (data) => {
+  if (data.toUserId === currentUserId) {
+    addMessage(data.message, 'received', data.fromUserId);
+  }
+});
+
+
+</script>
+
+</body>
+</html>
